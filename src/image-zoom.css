@@ -16,11 +16,18 @@ image-zoom {
 	aspect-ratio: var(--image-zoom-aspect);
 	background: var(--image-zoom-bg);
 	border-radius: var(--image-zoom-radius);
-	touch-action: none;
+	/* Allow single-finger vertical page scroll over the image when not zoomed;
+	   two-finger pinch still reaches the component. */
+	touch-action: pan-y;
 	-webkit-user-select: none;
 	user-select: none;
 	cursor: var(--image-zoom-cursor);
 	box-sizing: border-box;
+}
+
+image-zoom[zoomed],
+image-zoom[gesturing] {
+	touch-action: none;
 }
 
 image-zoom * {

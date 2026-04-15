@@ -1,5 +1,4 @@
 export class ImageZoom extends HTMLElement {
-	handlers: Record<string, EventListener>;
 	readonly min: number;
 	readonly max: number;
 	readonly scale: number;

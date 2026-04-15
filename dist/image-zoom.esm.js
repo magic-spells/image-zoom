@@ -32,6 +32,9 @@ class ImageZoom extends HTMLElement {
 	#tapStartY = 0;
 	#tapMoved = false;
 	#lastTapTime = 0;
+	#lastTapX = 0;
+	#lastTapY = 0;
+	#resizeFrame = 0;
 
 	static get observedAttributes() {
 		return ['min', 'max'];
@@ -86,6 +89,10 @@ class ImageZoom extends HTMLElement {
 	 */
 	disconnectedCallback() {
 		this.detachListeners();
+		if (this.#resizeFrame) {
+			cancelAnimationFrame(this.#resizeFrame);
+			this.#resizeFrame = 0;
+		}
 	}
 
 	/**
@@ -93,7 +100,7 @@ class ImageZoom extends HTMLElement {
 	 * @param {string} name
 	 */
 	attributeChangedCallback(name) {
-		if (!this.#img || !this.#imgNaturalWidth) return;
+		if (!this.#isReady()) return;
 		if (name === 'min' || name === 'max') {
 			if (this.#scale < this.min) this.reset();
 			else if (this.#scale > this.max) this.zoomTo(this.max);
@@ -162,21 +169,15 @@ class ImageZoom extends HTMLElement {
 	 */
 	reset({ animate = true } = {}) {
 		const _ = this;
-		if (!_.#img || !_.#imgNaturalWidth) return;
+		if (!_.#isReady()) return;
 		const rect = _.getBoundingClientRect();
 		_.#containerRect = rect;
 		const target = _.min;
 		const width = _.#imgNaturalWidth * _.#baseScale * target;
 		const height = _.#imgNaturalHeight * _.#baseScale * target;
-		const tx = (rect.width - width) / 2;
-		const ty = (rect.height - height) / 2;
-		if (animate) _.#animateTo(target, tx, ty);
-		else {
-			_.#scale = target;
-			_.#translateX = tx;
-			_.#translateY = ty;
-			_.#applyTransform();
-		}
+		const nextTranslateX = (rect.width - width) / 2;
+		const nextTranslateY = (rect.height - height) / 2;
+		_.#commitZoom(target, nextTranslateX, nextTranslateY, animate);
 	}
 
 	/**
@@ -186,38 +187,54 @@ class ImageZoom extends HTMLElement {
 	 */
 	zoomTo(nextScale, { animate = true } = {}) {
 		const _ = this;
-		if (!_.#img || !_.#imgNaturalWidth) return;
+		if (!_.#isReady()) return;
 		const rect = _.getBoundingClientRect();
 		_.#containerRect = rect;
 		const target = Math.max(_.min, Math.min(_.max, nextScale));
-		const cx = rect.width / 2;
-		const cy = rect.height / 2;
-		let tx = cx - (cx - _.#translateX) * (target / _.#scale);
-		let ty = cy - (cy - _.#translateY) * (target / _.#scale);
-		({ tx, ty } = _.#constrainTranslate(tx, ty, target));
-		if (animate) _.#animateTo(target, tx, ty);
-		else {
-			_.#scale = target;
-			_.#translateX = tx;
-			_.#translateY = ty;
-			_.#applyTransform();
-		}
+		const centerX = rect.width / 2;
+		const centerY = rect.height / 2;
+		const rawX = centerX - (centerX - _.#translateX) * (target / _.#scale);
+		const rawY = centerY - (centerY - _.#translateY) * (target / _.#scale);
+		const constrained = _.#constrainTranslate(rawX, rawY, target);
+		_.#commitZoom(target, constrained.translateX, constrained.translateY, animate);
 	}
 
 	/**
-	 * Compute the contain-fit base scale and center the image.
+	 * Readiness check — true when the inner image exists and has known dimensions.
 	 * @private
 	 */
-	#initialiseFit() {
+	#isReady() {
+		return !!(this.#img && this.#imgNaturalWidth);
+	}
+
+	/**
+	 * Read natural image dimensions and compute the contain-fit base scale.
+	 * Updates #containerRect. Does not touch user-facing scale or translate.
+	 * @private
+	 */
+	#recomputeBaseScale() {
 		const _ = this;
 		_.#imgNaturalWidth = _.#img.naturalWidth;
 		_.#imgNaturalHeight = _.#img.naturalHeight;
-		if (!_.#imgNaturalWidth || !_.#imgNaturalHeight) return;
+		if (!_.#imgNaturalWidth || !_.#imgNaturalHeight) return false;
 		const rect = _.getBoundingClientRect();
+		if (!rect.width || !rect.height) return false;
+		_.#containerRect = rect;
 		_.#baseScale = Math.min(
 			rect.width / _.#imgNaturalWidth,
 			rect.height / _.#imgNaturalHeight
 		);
+		return true;
+	}
+
+	/**
+	 * Initial fit: compute base scale and center the image at min zoom.
+	 * @private
+	 */
+	#initialiseFit() {
+		const _ = this;
+		if (!_.#recomputeBaseScale()) return;
+		const rect = _.#containerRect;
 		_.#scale = _.min;
 		const width = _.#imgNaturalWidth * _.#baseScale * _.#scale;
 		const height = _.#imgNaturalHeight * _.#baseScale * _.#scale;
@@ -277,24 +294,26 @@ class ImageZoom extends HTMLElement {
 	 * than it, and center the image when smaller than the container.
 	 * @private
 	 */
-	#constrainTranslate(tx, ty, scale) {
+	#constrainTranslate(translateX, translateY, scale) {
 		const _ = this;
 		const rect = _.#containerRect || _.getBoundingClientRect();
 		const width = _.#imgNaturalWidth * _.#baseScale * scale;
 		const height = _.#imgNaturalHeight * _.#baseScale * scale;
+		let clampedX;
+		let clampedY;
 		if (width <= rect.width) {
-			tx = (rect.width - width) / 2;
+			clampedX = (rect.width - width) / 2;
 		} else {
-			const minTx = rect.width - width;
-			tx = Math.min(0, Math.max(minTx, tx));
+			const minX = rect.width - width;
+			clampedX = Math.min(0, Math.max(minX, translateX));
 		}
 		if (height <= rect.height) {
-			ty = (rect.height - height) / 2;
+			clampedY = (rect.height - height) / 2;
 		} else {
-			const minTy = rect.height - height;
-			ty = Math.min(0, Math.max(minTy, ty));
+			const minY = rect.height - height;
+			clampedY = Math.min(0, Math.max(minY, translateY));
 		}
-		return { tx, ty };
+		return { translateX: clampedX, translateY: clampedY };
 	}
 
 	/**
@@ -324,7 +343,7 @@ class ImageZoom extends HTMLElement {
 	 */
 	#onPointerDown(event) {
 		const _ = this;
-		if (!_.#img || !_.#imgNaturalWidth) return;
+		if (!_.#isReady()) return;
 		// Touch events handle the touch path — skip to avoid double-firing.
 		if (event.pointerType === 'touch') return;
 		_.#containerRect = _.getBoundingClientRect();
@@ -379,6 +398,7 @@ class ImageZoom extends HTMLElement {
 				_.#beginPan();
 			} else {
 				_.#gesture.mode = 'idle';
+				_.removeAttribute('gesturing');
 			}
 			return;
 		}
@@ -395,16 +415,19 @@ class ImageZoom extends HTMLElement {
 	 */
 	#beginPinch() {
 		const _ = this;
-		const [p1, p2] = [..._.#gesture.pointers.values()];
-		const mx = (p1.x + p2.x) / 2;
-		const my = (p1.y + p2.y) / 2;
+		const [firstPointer, secondPointer] = [..._.#gesture.pointers.values()];
+		const midpointX = (firstPointer.x + secondPointer.x) / 2;
+		const midpointY = (firstPointer.y + secondPointer.y) / 2;
 		_.#gesture.mode = 'pinch';
 		_.#gesture.startScale = _.#scale;
 		_.#gesture.startTranslateX = _.#translateX;
 		_.#gesture.startTranslateY = _.#translateY;
-		_.#gesture.startDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
-		_.#gesture.startMidpointX = mx;
-		_.#gesture.startMidpointY = my;
+		_.#gesture.startDistance = Math.hypot(
+			secondPointer.x - firstPointer.x,
+			secondPointer.y - firstPointer.y
+		) || 1;
+		_.#gesture.startMidpointX = midpointX;
+		_.#gesture.startMidpointY = midpointY;
 		_.setAttribute('gesturing', '');
 		_.dispatchEvent(
 			new CustomEvent('image-zoom:zoomstart', {
@@ -419,25 +442,30 @@ class ImageZoom extends HTMLElement {
 	 */
 	#updatePinch() {
 		const _ = this;
-		const [p1, p2] = [..._.#gesture.pointers.values()];
-		const distance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-		const midpointX = (p1.x + p2.x) / 2;
-		const midpointY = (p1.y + p2.y) / 2;
-		const g = _.#gesture;
+		const [firstPointer, secondPointer] = [..._.#gesture.pointers.values()];
+		const distance = Math.hypot(
+			secondPointer.x - firstPointer.x,
+			secondPointer.y - firstPointer.y
+		);
+		const midpointX = (firstPointer.x + secondPointer.x) / 2;
+		const midpointY = (firstPointer.y + secondPointer.y) / 2;
+		const gesture = _.#gesture;
 
-		const rawScale = g.startScale * (distance / g.startDistance);
+		const rawScale = gesture.startScale * (distance / gesture.startDistance);
 		const nextScale = _.#rubberBandScale(rawScale);
-		const ratio = nextScale / g.startScale;
+		const ratio = nextScale / gesture.startScale;
 
-		let tx = midpointX - (g.startMidpointX - g.startTranslateX) * ratio;
-		let ty = midpointY - (g.startMidpointY - g.startTranslateY) * ratio;
+		let nextTranslateX = midpointX - (gesture.startMidpointX - gesture.startTranslateX) * ratio;
+		let nextTranslateY = midpointY - (gesture.startMidpointY - gesture.startTranslateY) * ratio;
 
 		_.#scale = nextScale;
 		if (nextScale >= _.min && nextScale <= _.max) {
-			({ tx, ty } = _.#constrainTranslate(tx, ty, nextScale));
+			const constrained = _.#constrainTranslate(nextTranslateX, nextTranslateY, nextScale);
+			nextTranslateX = constrained.translateX;
+			nextTranslateY = constrained.translateY;
 		}
-		_.#translateX = tx;
-		_.#translateY = ty;
+		_.#translateX = nextTranslateX;
+		_.#translateY = nextTranslateY;
 		_.#applyTransform();
 	}
 
@@ -450,13 +478,13 @@ class ImageZoom extends HTMLElement {
 			_.#gesture.mode = 'idle';
 			return;
 		}
-		const [p] = [..._.#gesture.pointers.values()];
+		const [pointer] = [..._.#gesture.pointers.values()];
 		_.#gesture.mode = 'pan';
 		_.#gesture.startScale = _.#scale;
 		_.#gesture.startTranslateX = _.#translateX;
 		_.#gesture.startTranslateY = _.#translateY;
-		_.#gesture.startMidpointX = p.x;
-		_.#gesture.startMidpointY = p.y;
+		_.#gesture.startMidpointX = pointer.x;
+		_.#gesture.startMidpointY = pointer.y;
 		_.setAttribute('gesturing', '');
 	}
 
@@ -465,13 +493,13 @@ class ImageZoom extends HTMLElement {
 	 */
 	#updatePan() {
 		const _ = this;
-		const [p] = [..._.#gesture.pointers.values()];
-		const g = _.#gesture;
-		let tx = g.startTranslateX + (p.x - g.startMidpointX);
-		let ty = g.startTranslateY + (p.y - g.startMidpointY);
-		({ tx, ty } = _.#constrainTranslate(tx, ty, _.#scale));
-		_.#translateX = tx;
-		_.#translateY = ty;
+		const [pointer] = [..._.#gesture.pointers.values()];
+		const gesture = _.#gesture;
+		const rawX = gesture.startTranslateX + (pointer.x - gesture.startMidpointX);
+		const rawY = gesture.startTranslateY + (pointer.y - gesture.startMidpointY);
+		const constrained = _.#constrainTranslate(rawX, rawY, _.#scale);
+		_.#translateX = constrained.translateX;
+		_.#translateY = constrained.translateY;
 		_.#applyTransform();
 	}
 
@@ -485,17 +513,17 @@ class ImageZoom extends HTMLElement {
 		if (target < _.min) target = _.min;
 		else if (target > _.max) target = _.max;
 
-		let tx = _.#translateX;
-		let ty = _.#translateY;
+		let nextTranslateX = _.#translateX;
+		let nextTranslateY = _.#translateY;
 		if (target !== _.#scale) {
-			const mx = _.#gesture.startMidpointX || (_.#containerRect.width / 2);
-			const my = _.#gesture.startMidpointY || (_.#containerRect.height / 2);
+			const midpointX = _.#gesture.startMidpointX;
+			const midpointY = _.#gesture.startMidpointY;
 			const ratio = target / _.#scale;
-			tx = mx - (mx - _.#translateX) * ratio;
-			ty = my - (my - _.#translateY) * ratio;
+			nextTranslateX = midpointX - (midpointX - _.#translateX) * ratio;
+			nextTranslateY = midpointY - (midpointY - _.#translateY) * ratio;
 		}
-		({ tx, ty } = _.#constrainTranslate(tx, ty, target));
-		_.#animateTo(target, tx, ty);
+		const constrained = _.#constrainTranslate(nextTranslateX, nextTranslateY, target);
+		_.#animateTo(target, constrained.translateX, constrained.translateY);
 		_.dispatchEvent(
 			new CustomEvent('image-zoom:zoomend', {
 				bubbles: true,
@@ -505,16 +533,54 @@ class ImageZoom extends HTMLElement {
 	}
 
 	/**
-	 * Animate to a target transform via a CSS transition.
+	 * Write a target transform with a CSS transition. Internal — no events.
+	 * Skips the transitioning attribute when the target is already the current
+	 * state, otherwise no transition fires and the attribute would stick.
 	 * @private
 	 */
-	#animateTo(scale, tx, ty) {
+	#animateTo(scale, translateX, translateY) {
 		const _ = this;
+		if (
+			scale === _.#scale &&
+			translateX === _.#translateX &&
+			translateY === _.#translateY
+		) {
+			return;
+		}
 		_.setAttribute('transitioning', '');
 		_.#scale = scale;
-		_.#translateX = tx;
-		_.#translateY = ty;
+		_.#translateX = translateX;
+		_.#translateY = translateY;
 		_.#applyTransform();
+	}
+
+	/**
+	 * Public-facing commit: fires zoomstart/zoomend around the transform.
+	 * Used by reset, zoomTo, and double-tap.
+	 * @private
+	 */
+	#commitZoom(scale, translateX, translateY, animate) {
+		const _ = this;
+		_.dispatchEvent(
+			new CustomEvent('image-zoom:zoomstart', {
+				bubbles: true,
+				detail: { scale: _.#scale },
+			})
+		);
+		if (animate) {
+			_.#animateTo(scale, translateX, translateY);
+		} else {
+			_.#scale = scale;
+			_.#translateX = translateX;
+			_.#translateY = translateY;
+			_.#applyTransform();
+		}
+		_.dispatchEvent(
+			new CustomEvent('image-zoom:zoomend', {
+				bubbles: true,
+				detail: { scale },
+			})
+		);
 	}
 
 	/**
@@ -523,7 +589,7 @@ class ImageZoom extends HTMLElement {
 	 */
 	#onDoubleClick(event) {
 		const _ = this;
-		if (!_.#img || !_.#imgNaturalWidth) return;
+		if (!_.#isReady()) return;
 		_.#containerRect = _.getBoundingClientRect();
 		const local = _.#toLocal(event);
 		_.#doubleTapAt(local.x, local.y);
@@ -542,10 +608,10 @@ class ImageZoom extends HTMLElement {
 		}
 		const target = _.max;
 		const ratio = target / _.#scale;
-		let tx = localX - (localX - _.#translateX) * ratio;
-		let ty = localY - (localY - _.#translateY) * ratio;
-		({ tx, ty } = _.#constrainTranslate(tx, ty, target));
-		_.#animateTo(target, tx, ty);
+		const rawX = localX - (localX - _.#translateX) * ratio;
+		const rawY = localY - (localY - _.#translateY) * ratio;
+		const constrained = _.#constrainTranslate(rawX, rawY, target);
+		_.#commitZoom(target, constrained.translateX, constrained.translateY, true);
 	}
 
 	/**
@@ -554,22 +620,27 @@ class ImageZoom extends HTMLElement {
 	 */
 	#onTouchStart(event) {
 		const _ = this;
-		if (!_.#img || !_.#imgNaturalWidth) return;
-		event.preventDefault();
+		if (!_.#isReady()) return;
 		_.#containerRect = _.getBoundingClientRect();
 		_.removeAttribute('transitioning');
 		_.#syncTouches(event.touches);
 
 		if (_.#gesture.pointers.size >= 2) {
+			if (event.cancelable) event.preventDefault();
 			_.#beginPinch();
 			return;
 		}
 		if (_.#gesture.pointers.size === 1) {
-			const [p] = [..._.#gesture.pointers.values()];
-			_.#tapStartX = p.x;
-			_.#tapStartY = p.y;
+			const [pointer] = [..._.#gesture.pointers.values()];
+			_.#tapStartX = pointer.x;
+			_.#tapStartY = pointer.y;
 			_.#tapMoved = false;
-			_.#beginPan();
+			// Only claim the single-finger gesture when already zoomed.
+			// Otherwise let the browser handle vertical page scroll.
+			if (_.#scale > _.min + 0.001) {
+				if (event.cancelable) event.preventDefault();
+				_.#beginPan();
+			}
 		}
 	}
 
@@ -580,19 +651,20 @@ class ImageZoom extends HTMLElement {
 	#onTouchMove(event) {
 		const _ = this;
 		if (_.#gesture.pointers.size === 0) return;
-		if (event.cancelable) event.preventDefault();
 		_.#syncTouches(event.touches);
 
 		if (_.#gesture.pointers.size === 1 && !_.#tapMoved) {
-			const [p] = [..._.#gesture.pointers.values()];
-			const dx = p.x - _.#tapStartX;
-			const dy = p.y - _.#tapStartY;
-			if (dx * dx + dy * dy > 100) _.#tapMoved = true;
+			const [pointer] = [..._.#gesture.pointers.values()];
+			const deltaX = pointer.x - _.#tapStartX;
+			const deltaY = pointer.y - _.#tapStartY;
+			if (deltaX * deltaX + deltaY * deltaY > 100) _.#tapMoved = true;
 		}
 
 		if (_.#gesture.mode === 'pinch' && _.#gesture.pointers.size >= 2) {
+			if (event.cancelable) event.preventDefault();
 			_.#updatePinch();
 		} else if (_.#gesture.mode === 'pan') {
+			if (event.cancelable) event.preventDefault();
 			_.#updatePan();
 		}
 	}
@@ -610,9 +682,9 @@ class ImageZoom extends HTMLElement {
 			_.#settle();
 			if (_.#gesture.pointers.size === 1 && _.#scale > _.min + 0.001) {
 				// Re-seed pan with the remaining finger as the new anchor.
-				const [p] = [..._.#gesture.pointers.values()];
-				_.#tapStartX = p.x;
-				_.#tapStartY = p.y;
+				const [pointer] = [..._.#gesture.pointers.values()];
+				_.#tapStartX = pointer.x;
+				_.#tapStartY = pointer.y;
 				_.#tapMoved = true;
 				_.#beginPan();
 			} else {
@@ -626,14 +698,7 @@ class ImageZoom extends HTMLElement {
 			if (_.#gesture.mode === 'pan' && _.#tapMoved) {
 				_.#settle();
 			} else if (previousSize === 1 && !_.#tapMoved) {
-				// Treat as a tap — check for double-tap.
-				const now = performance.now();
-				if (now - _.#lastTapTime < 300) {
-					_.#doubleTapAt(_.#tapStartX, _.#tapStartY);
-					_.#lastTapTime = 0;
-				} else {
-					_.#lastTapTime = now;
-				}
+				_.#handleTap();
 			}
 			_.#gesture.mode = 'idle';
 			_.removeAttribute('gesturing');
@@ -641,10 +706,43 @@ class ImageZoom extends HTMLElement {
 	}
 
 	/**
+	 * Detect a tap vs. a double-tap using time and spatial proximity to the
+	 * previous tap, then dispatch a double-tap zoom when both match.
+	 * @private
+	 */
+	#handleTap() {
+		const _ = this;
+		const now = performance.now();
+		const deltaX = _.#tapStartX - _.#lastTapX;
+		const deltaY = _.#tapStartY - _.#lastTapY;
+		const withinTime = now - _.#lastTapTime < 300;
+		const withinSpace = deltaX * deltaX + deltaY * deltaY < 400;
+		if (withinTime && withinSpace) {
+			_.#doubleTapAt(_.#tapStartX, _.#tapStartY);
+			_.#lastTapTime = 0;
+			return;
+		}
+		_.#lastTapTime = now;
+		_.#lastTapX = _.#tapStartX;
+		_.#lastTapY = _.#tapStartY;
+	}
+
+	/**
 	 * @private
 	 */
 	#onResize() {
-		if (this.#img && this.#imgNaturalWidth) this.#initialiseFit();
+		const _ = this;
+		if (!_.#isReady()) return;
+		if (_.#resizeFrame) return;
+		_.#resizeFrame = requestAnimationFrame(() => {
+			_.#resizeFrame = 0;
+			if (!_.#recomputeBaseScale()) return;
+			// Preserve the user's current scale; just reclamp translate to the new rect.
+			const constrained = _.#constrainTranslate(_.#translateX, _.#translateY, _.#scale);
+			_.#translateX = constrained.translateX;
+			_.#translateY = constrained.translateY;
+			_.#applyTransform();
+		});
 	}
 }
 
@@ -661,4 +759,3 @@ if (!customElements.get('image-zoom')) {
 }
 
 export { ImageZoom };
-//# sourceMappingURL=image-zoom.esm.js.map
