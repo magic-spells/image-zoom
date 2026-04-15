@@ -2,6 +2,8 @@
 
 Pinch-to-zoom and pan web component for images. Mobile-first, light-DOM, no dependencies.
 
+🔍 **[Live Demo](https://magic-spells.github.io/image-zoom/demo/)** - See it in action!
+
 ## Install
 
 ```sh
@@ -67,3 +69,9 @@ el.zoomTo(2, { animate: false });
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  Made by <a href="https://github.com/coryschulz">Cory Schulz</a>
+</p>
