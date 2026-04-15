@@ -35,6 +35,7 @@ class ImageZoom extends HTMLElement {
 	#lastTapX = 0;
 	#lastTapY = 0;
 	#resizeFrame = 0;
+	#resizeObserver = null;
 
 	static get observedAttributes() {
 		return ['min', 'max'];
@@ -88,11 +89,18 @@ class ImageZoom extends HTMLElement {
 	 * Lifecycle — element disconnected from DOM.
 	 */
 	disconnectedCallback() {
-		this.detachListeners();
-		if (this.#resizeFrame) {
-			cancelAnimationFrame(this.#resizeFrame);
-			this.#resizeFrame = 0;
+		const _ = this;
+		_.detachListeners();
+		if (_.#resizeFrame) {
+			cancelAnimationFrame(_.#resizeFrame);
+			_.#resizeFrame = 0;
 		}
+		_.#gesture.pointers.clear();
+		_.#gesture.mode = 'idle';
+		_.#tapMoved = false;
+		_.#lastTapTime = 0;
+		_.removeAttribute('gesturing');
+		_.removeAttribute('transitioning');
 	}
 
 	/**
@@ -128,7 +136,6 @@ class ImageZoom extends HTMLElement {
 		_.handlers.pointerMove = _.#onPointerMove.bind(_);
 		_.handlers.pointerUp = _.#onPointerUp.bind(_);
 		_.handlers.dblClick = _.#onDoubleClick.bind(_);
-		_.handlers.resize = _.#onResize.bind(_);
 		_.handlers.transitionEnd = () => _.removeAttribute('transitioning');
 
 		_.addEventListener('touchstart', _.handlers.touchStart, { passive: false });
@@ -141,7 +148,11 @@ class ImageZoom extends HTMLElement {
 		window.addEventListener('pointercancel', _.handlers.pointerUp);
 		_.addEventListener('dblclick', _.handlers.dblClick);
 		_.addEventListener('transitionend', _.handlers.transitionEnd);
-		window.addEventListener('resize', _.handlers.resize);
+
+		// ResizeObserver covers window resizes, tab/accordion reveals, and any
+		// ancestor layout change — catches the hidden-then-shown init case too.
+		_.#resizeObserver = new ResizeObserver(() => _.#onResize());
+		_.#resizeObserver.observe(_);
 	}
 
 	/**
@@ -160,7 +171,10 @@ class ImageZoom extends HTMLElement {
 		window.removeEventListener('pointercancel', _.handlers.pointerUp);
 		_.removeEventListener('dblclick', _.handlers.dblClick);
 		_.removeEventListener('transitionend', _.handlers.transitionEnd);
-		window.removeEventListener('resize', _.handlers.resize);
+		if (_.#resizeObserver) {
+			_.#resizeObserver.disconnect();
+			_.#resizeObserver = null;
+		}
 	}
 
 	/**
@@ -214,15 +228,17 @@ class ImageZoom extends HTMLElement {
 	 */
 	#recomputeBaseScale() {
 		const _ = this;
-		_.#imgNaturalWidth = _.#img.naturalWidth;
-		_.#imgNaturalHeight = _.#img.naturalHeight;
-		if (!_.#imgNaturalWidth || !_.#imgNaturalHeight) return false;
+		const naturalWidth = _.#img.naturalWidth;
+		const naturalHeight = _.#img.naturalHeight;
+		if (!naturalWidth || !naturalHeight) return false;
 		const rect = _.getBoundingClientRect();
 		if (!rect.width || !rect.height) return false;
+		_.#imgNaturalWidth = naturalWidth;
+		_.#imgNaturalHeight = naturalHeight;
 		_.#containerRect = rect;
 		_.#baseScale = Math.min(
-			rect.width / _.#imgNaturalWidth,
-			rect.height / _.#imgNaturalHeight
+			rect.width / naturalWidth,
+			rect.height / naturalHeight
 		);
 		return true;
 	}
@@ -561,6 +577,13 @@ class ImageZoom extends HTMLElement {
 	 */
 	#commitZoom(scale, translateX, translateY, animate) {
 		const _ = this;
+		if (
+			scale === _.#scale &&
+			translateX === _.#translateX &&
+			translateY === _.#translateY
+		) {
+			return;
+		}
 		_.dispatchEvent(
 			new CustomEvent('image-zoom:zoomstart', {
 				bubbles: true,
@@ -675,12 +698,13 @@ class ImageZoom extends HTMLElement {
 	 */
 	#onTouchEnd(event) {
 		const _ = this;
+		const cancelled = event.type === 'touchcancel';
 		const previousSize = _.#gesture.pointers.size;
 		_.#syncTouches(event.touches);
 
 		if (_.#gesture.mode === 'pinch' && _.#gesture.pointers.size < 2) {
 			_.#settle();
-			if (_.#gesture.pointers.size === 1 && _.#scale > _.min + 0.001) {
+			if (!cancelled && _.#gesture.pointers.size === 1 && _.#scale > _.min + 0.001) {
 				// Re-seed pan with the remaining finger as the new anchor.
 				const [pointer] = [..._.#gesture.pointers.values()];
 				_.#tapStartX = pointer.x;
@@ -697,7 +721,7 @@ class ImageZoom extends HTMLElement {
 		if (_.#gesture.pointers.size === 0) {
 			if (_.#gesture.mode === 'pan' && _.#tapMoved) {
 				_.#settle();
-			} else if (previousSize === 1 && !_.#tapMoved) {
+			} else if (!cancelled && previousSize === 1 && !_.#tapMoved) {
 				_.#handleTap();
 			}
 			_.#gesture.mode = 'idle';
@@ -732,10 +756,16 @@ class ImageZoom extends HTMLElement {
 	 */
 	#onResize() {
 		const _ = this;
-		if (!_.#isReady()) return;
+		if (!_.#img) return;
 		if (_.#resizeFrame) return;
 		_.#resizeFrame = requestAnimationFrame(() => {
 			_.#resizeFrame = 0;
+			// First-time init: element was hidden (zero rect) at connect and
+			// has just become visible. Run full fit instead of reclamping.
+			if (!_.#isReady()) {
+				if (_.#img.complete && _.#img.naturalWidth) _.#initialiseFit();
+				return;
+			}
 			if (!_.#recomputeBaseScale()) return;
 			// Preserve the user's current scale; just reclamp translate to the new rect.
 			const constrained = _.#constrainTranslate(_.#translateX, _.#translateY, _.#scale);

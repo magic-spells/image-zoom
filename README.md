@@ -38,8 +38,8 @@ import '@magic-spells/image-zoom/css';
 
 | Event | Detail | Description |
 |---|---|---|
-| `image-zoom:zoomstart` | `{ scale }` | Pinch gesture begins. |
-| `image-zoom:zoomend` | `{ scale }` | Gesture has ended and settled. |
+| `image-zoom:zoomstart` | `{ scale }` | A pinch gesture begins, or a programmatic `reset()` / `zoomTo()` / double-tap is about to change the transform. Suppressed when the call is a no-op. |
+| `image-zoom:zoomend` | `{ scale }` | A pinch gesture has settled, or a programmatic transform change has been committed. Fires immediately after the commit, not after the CSS transition completes. |
 | `image-zoom:change` | `{ scale, translateX, translateY }` | Any transform update (fires frequently during gestures). |
 
 ## Public API
