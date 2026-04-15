@@ -1,0 +1,74 @@
+{
+	"name": "@magic-spells/image-zoom",
+	"version": "0.1.0",
+	"description": "Pinch-to-zoom and pan web component for images.",
+	"author": "Cory Schulz",
+	"license": "MIT",
+	"type": "module",
+	"main": "dist/image-zoom.esm.js",
+	"module": "dist/image-zoom.esm.js",
+	"unpkg": "dist/image-zoom.min.js",
+	"style": "dist/image-zoom.min.css",
+	"exports": {
+		".": {
+			"import": "./dist/image-zoom.esm.js",
+			"default": "./dist/image-zoom.esm.js"
+		},
+		"./css": "./dist/image-zoom.css",
+		"./css/min": "./dist/image-zoom.min.css"
+	},
+	"sideEffects": true,
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/magic-spells/image-zoom.git"
+	},
+	"homepage": "https://github.com/magic-spells/image-zoom#readme",
+	"bugs": {
+		"url": "https://github.com/magic-spells/image-zoom/issues"
+	},
+	"keywords": [
+		"image-zoom",
+		"pinch-zoom",
+		"pan",
+		"gesture",
+		"web-components",
+		"custom-elements",
+		"mobile",
+		"touch",
+		"pointer-events"
+	],
+	"types": "./types.d.ts",
+	"files": [
+		"dist/",
+		"types.d.ts"
+	],
+	"scripts": {
+		"build": "rollup -c",
+		"lint": "eslint src/ rollup.config.js",
+		"format": "prettier --write .",
+		"prepublishOnly": "npm run build",
+		"serve": "rollup -c --watch",
+		"dev": "rollup -c --watch"
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
+	"browserslist": [
+		"last 2 versions",
+		"not dead",
+		"not ie <= 11"
+	],
+	"devDependencies": {
+		"@eslint/js": "^8.57.0",
+		"@rollup/plugin-node-resolve": "^15.2.3",
+		"@rollup/plugin-terser": "^1.0.0",
+		"eslint": "^8.0.0",
+		"globals": "^13.24.0",
+		"prettier": "^3.3.3",
+		"rollup": "^3.0.0",
+		"rollup-plugin-copy": "^3.5.0",
+		"rollup-plugin-postcss": "^4.0.2",
+		"rollup-plugin-serve": "^1.1.1"
+	}
+}

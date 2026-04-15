@@ -1,0 +1,57 @@
+:root {
+	--image-zoom-bg: #000;
+	--image-zoom-radius: 0;
+	--image-zoom-aspect: 4 / 3;
+	--image-zoom-cursor: grab;
+	--image-zoom-cursor-active: grabbing;
+	--image-zoom-transition-duration: 300ms;
+	--image-zoom-transition-easing: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+image-zoom {
+	display: block;
+	position: relative;
+	overflow: hidden;
+	width: 100%;
+	aspect-ratio: var(--image-zoom-aspect);
+	background: var(--image-zoom-bg);
+	border-radius: var(--image-zoom-radius);
+	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
+	cursor: var(--image-zoom-cursor);
+	box-sizing: border-box;
+}
+
+image-zoom * {
+	box-sizing: border-box;
+}
+
+image-zoom img {
+	display: block;
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: auto;
+	height: auto;
+	max-width: none;
+	max-height: none;
+	transform-origin: 0 0;
+	will-change: transform;
+	-webkit-user-drag: none;
+	user-select: none;
+	pointer-events: none;
+}
+
+image-zoom[transitioning] img {
+	transition:
+		transform var(--image-zoom-transition-duration)
+		var(--image-zoom-transition-easing);
+}
+
+image-zoom[gesturing],
+image-zoom[zoomed] {
+	cursor: var(--image-zoom-cursor-active);
+}
+
+/*# sourceMappingURL=image-zoom.min.css.map */
