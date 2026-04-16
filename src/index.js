@@ -14,6 +14,6 @@ import { ImageZoom } from './components/image-zoom.js';
 export { ImageZoom };
 
 // define custom elements if not already defined
-if (!customElements.get('image-zoom')) {
+if (typeof customElements !== 'undefined' && !customElements.get('image-zoom')) {
 	customElements.define('image-zoom', ImageZoom);
 }

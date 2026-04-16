@@ -45,7 +45,8 @@
    * @class ImageZoom
    * @extends HTMLElement
    */
-  class ImageZoom extends HTMLElement {
+  const Base = typeof HTMLElement !== 'undefined' ? HTMLElement : class {};
+  class ImageZoom extends Base {
   	#img;
   	#imgNaturalWidth = 0;
   	#imgNaturalHeight = 0;
@@ -63,6 +64,8 @@
   		startDistance: 0,
   		startMidpointX: 0,
   		startMidpointY: 0,
+  		currentMidpointX: 0,
+  		currentMidpointY: 0,
   	};
   	#tapStartX = 0;
   	#tapStartY = 0;
@@ -83,13 +86,19 @@
   	}
 
   	get min() {
-  		const value = parseFloat(this.getAttribute('min'));
-  		return Number.isFinite(value) && value > 0 ? value : 1;
+  		const min = parseFloat(this.getAttribute('min'));
+  		const max = parseFloat(this.getAttribute('max'));
+  		const safeMin = Number.isFinite(min) && min > 0 ? min : 1;
+  		const safeMax = Number.isFinite(max) && max > 0 ? max : 3;
+  		return Math.min(safeMin, safeMax);
   	}
 
   	get max() {
-  		const value = parseFloat(this.getAttribute('max'));
-  		return Number.isFinite(value) && value > 0 ? value : 3;
+  		const min = parseFloat(this.getAttribute('min'));
+  		const max = parseFloat(this.getAttribute('max'));
+  		const safeMin = Number.isFinite(min) && min > 0 ? min : 1;
+  		const safeMax = Number.isFinite(max) && max > 0 ? max : 3;
+  		return Math.max(safeMin, safeMax);
   	}
 
   	get scale() {
@@ -445,10 +454,11 @@
   		_.#gesture.pointers.delete(event.pointerId);
 
   		if (_.#gesture.mode === 'pinch' && _.#gesture.pointers.size < 2) {
-  			_.#settle();
   			if (_.#gesture.pointers.size === 1 && _.#scale > _.min + 0.001) {
+  				_.#settleImmediate();
   				_.#beginPan();
   			} else {
+  				_.#settle();
   				_.#gesture.mode = 'idle';
   				_.removeAttribute('gesturing');
   			}
@@ -480,6 +490,8 @@
   		) || 1;
   		_.#gesture.startMidpointX = midpointX;
   		_.#gesture.startMidpointY = midpointY;
+  		_.#gesture.currentMidpointX = midpointX;
+  		_.#gesture.currentMidpointY = midpointY;
   		_.setAttribute('gesturing', '');
   		_.dispatchEvent(
   			new CustomEvent('image-zoom:zoomstart', {
@@ -502,6 +514,8 @@
   		const midpointX = (firstPointer.x + secondPointer.x) / 2;
   		const midpointY = (firstPointer.y + secondPointer.y) / 2;
   		const gesture = _.#gesture;
+  		gesture.currentMidpointX = midpointX;
+  		gesture.currentMidpointY = midpointY;
 
   		const rawScale = gesture.startScale * (distance / gesture.startDistance);
   		const nextScale = _.#rubberBandScale(rawScale);
@@ -568,14 +582,46 @@
   		let nextTranslateX = _.#translateX;
   		let nextTranslateY = _.#translateY;
   		if (target !== _.#scale) {
-  			const midpointX = _.#gesture.startMidpointX;
-  			const midpointY = _.#gesture.startMidpointY;
+  			const midpointX = _.#gesture.currentMidpointX;
+  			const midpointY = _.#gesture.currentMidpointY;
   			const ratio = target / _.#scale;
   			nextTranslateX = midpointX - (midpointX - _.#translateX) * ratio;
   			nextTranslateY = midpointY - (midpointY - _.#translateY) * ratio;
   		}
   		const constrained = _.#constrainTranslate(nextTranslateX, nextTranslateY, target);
   		_.#animateTo(target, constrained.translateX, constrained.translateY);
+  		_.dispatchEvent(
+  			new CustomEvent('image-zoom:zoomend', {
+  				bubbles: true,
+  				detail: { scale: target },
+  			})
+  		);
+  	}
+
+  	/**
+  	 * Clamp into valid range without animation — used when handing off from pinch to pan.
+  	 * @private
+  	 */
+  	#settleImmediate() {
+  		const _ = this;
+  		let target = _.#scale;
+  		if (target < _.min) target = _.min;
+  		else if (target > _.max) target = _.max;
+
+  		let nextTranslateX = _.#translateX;
+  		let nextTranslateY = _.#translateY;
+  		if (target !== _.#scale) {
+  			const midpointX = _.#gesture.currentMidpointX;
+  			const midpointY = _.#gesture.currentMidpointY;
+  			const ratio = target / _.#scale;
+  			nextTranslateX = midpointX - (midpointX - _.#translateX) * ratio;
+  			nextTranslateY = midpointY - (midpointY - _.#translateY) * ratio;
+  		}
+  		const constrained = _.#constrainTranslate(nextTranslateX, nextTranslateY, target);
+  		_.#scale = target;
+  		_.#translateX = constrained.translateX;
+  		_.#translateY = constrained.translateY;
+  		_.#applyTransform();
   		_.dispatchEvent(
   			new CustomEvent('image-zoom:zoomend', {
   				bubbles: true,
@@ -739,15 +785,15 @@
   		_.#syncTouches(event.touches);
 
   		if (_.#gesture.mode === 'pinch' && _.#gesture.pointers.size < 2) {
-  			_.#settle();
   			if (!cancelled && _.#gesture.pointers.size === 1 && _.#scale > _.min + 0.001) {
-  				// Re-seed pan with the remaining finger as the new anchor.
+  				_.#settleImmediate();
   				const [pointer] = [..._.#gesture.pointers.values()];
   				_.#tapStartX = pointer.x;
   				_.#tapStartY = pointer.y;
   				_.#tapMoved = true;
   				_.#beginPan();
   			} else {
+  				_.#settle();
   				_.#gesture.mode = 'idle';
   				_.removeAttribute('gesturing');
   			}
@@ -820,7 +866,7 @@
 
 
   // define custom elements if not already defined
-  if (!customElements.get('image-zoom')) {
+  if (typeof customElements !== 'undefined' && !customElements.get('image-zoom')) {
   	customElements.define('image-zoom', ImageZoom);
   }
 
